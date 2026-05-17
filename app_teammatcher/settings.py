@@ -10,7 +10,7 @@ SECRET_KEY = 'django-insecure-pifx4!m+=e9t!=)l4k&&8&hn0306)gb!sx2g$1o27!^-63m(wr
 
 DEBUG = True
 
-ALLOWED_HOSTS = ['.pythonanywhere.com', '127.0.0.1']
+ALLOWED_HOSTS = ['testserver', 'localhost', '127.0.0.1','.pythonanywhere.com', '127.0.0.1']
 
 
 
@@ -24,6 +24,8 @@ INSTALLED_APPS = [
     'student_side',
     'teacher_side',
     'app_teammatcher',
+    'team_management',
+    'rest_framework',
 ]
 
 MIDDLEWARE = [
