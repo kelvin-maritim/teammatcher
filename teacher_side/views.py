@@ -10,7 +10,9 @@ from teacher_side.matcher.utils import get_weights
 from .forms import UploadFileForm
 from .models import CSVGeneration
 
-
+@staff_member_required
+def teacher_dashboard(request):
+    return render(request, 'teammatcher/teacher_dashboard.html')
 @staff_member_required
 def index(request):
     teams = []
