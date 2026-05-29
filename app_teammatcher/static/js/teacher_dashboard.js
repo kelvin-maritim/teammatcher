@@ -1,198 +1,252 @@
 /* teacher_dashboard.js
-   Endpoints (matched to urls.py):
-   - GET  /api/team-sets/          → load team set dropdown
-   - GET  /api/teams/?team_set=ID  → load teams for a team set
-   - POST /api/assignments/        → create assignments (run matching)
-   - GET  /teacher/download/       → export CSV
-*/
+ *
+ * Workflow:
+ *   1. Teacher picks a CSVGeneration from the dropdown → Load button
+ *   2. Backend parses the CSV and returns teams grouped by "cp" column
+ *   3. Teacher drags students between team cards
+ *   4. Export button POSTs the adjusted state → downloads LMS-ready CSV
+ *
+ * Endpoints used:
+ *   GET  /teacher/dashboard/api/load/?generation_id=ID  → { teams, max_size }
+ *   POST /teacher/dashboard/api/export/                 → CSV file download
+ */
 
 document.addEventListener("DOMContentLoaded", () => {
 
-  // ── Element refs ──────────────────────────────────────────
-  const teamsetSelect       = document.getElementById("teamset-select");
-  const csvFileInput        = document.getElementById("csv-file-input");
-  const uploadLabelText     = document.getElementById("upload-label-text");
-  const uploadArea          = document.getElementById("upload-area");
-  const btnRunMatching      = document.getElementById("btn-run-matching");
-  const btnExportCsv        = document.getElementById("btn-export-csv");
-  const teamsContainer      = document.getElementById("teams-container");
-  const unassignedContainer = document.getElementById("unassigned-container");
+  // ── Refs ────────────────────────────────────────────────
+  const generationSelect = document.getElementById("generation-select");
+  const btnLoad          = document.getElementById("btn-load");
+  const loadStatus       = document.getElementById("load-status");
+  const statusText       = document.getElementById("status-text");
+  const statusUnsaved    = document.getElementById("status-unsaved");
+  const sectionTeams     = document.getElementById("section-teams");
+  const sectionExport    = document.getElementById("section-export");
+  const teamsContainer   = document.getElementById("teams-container");
+  const btnExport        = document.getElementById("btn-export");
+  const btnReset         = document.getElementById("btn-reset");
+  const csrfToken        = () => document.querySelector("input[name='csrfmiddlewaretoken']").value;
 
-  // ── 1. Load all Team-Sets on page load ────────────────────
-  async function loadTeamSets() {
-    teamsetSelect.disabled = true;
-    teamsetSelect.innerHTML = '<option value="" disabled selected>Loading…</option>';
+  // ── State ───────────────────────────────────────────────
+  let state = {
+    generationId: null,
+    teams: [],          // [{ name, members: ["s-001076", …] }]
+    maxSize: 5,
+    originalSnapshot: null,   // JSON snapshot for reset
+    dirty: false,
+  };
 
-    try {
-      const res   = await fetch("/api/team-sets/");
-      const data  = await res.json();
-      // DRF may return paginated { results: [] } or a plain array
-      const items = Array.isArray(data) ? data : (data.results || []);
+  // ── Load ────────────────────────────────────────────────
+  btnLoad.addEventListener("click", async () => {
+    const id = generationSelect.value;
+    if (!id) { alert("Please select a matching result first."); return; }
 
-      teamsetSelect.innerHTML = '<option value="" disabled selected>— Choose a team set —</option>';
-      items.forEach(ts => {
-        const opt = document.createElement("option");
-        opt.value       = ts.id;
-        opt.textContent = ts.name;
-        teamsetSelect.appendChild(opt);
-      });
-      teamsetSelect.disabled = false;
-    } catch (err) {
-      teamsetSelect.innerHTML = '<option value="" disabled selected>Failed to load</option>';
-      console.error("Failed to load team sets:", err);
-    }
-  }
-
-  loadTeamSets();
-
-  // ── 2. CSV file label update ───────────────────────────────
-  csvFileInput.addEventListener("change", () => {
-    const file = csvFileInput.files[0];
-    uploadLabelText.textContent = file
-      ? `Datei ausgewählt · ${file.name}`
-      : "Datei auswählen · Keine Datei ausgewählt";
-  });
-
-  // Drag-and-drop visual feedback
-  uploadArea.addEventListener("dragover", e => {
-    e.preventDefault();
-    uploadArea.classList.add("drag-over");
-  });
-  ["dragleave", "drop"].forEach(evt =>
-    uploadArea.addEventListener(evt, () => uploadArea.classList.remove("drag-over"))
-  );
-  uploadArea.addEventListener("drop", e => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file && file.name.endsWith(".csv")) {
-      const dt = new DataTransfer();
-      dt.items.add(file);
-      csvFileInput.files = dt.files;
-      uploadLabelText.textContent = `Datei ausgewählt · ${file.name}`;
-    }
-  });
-
-  // ── 3. Run Matching ────────────────────────────────────────
-  // Fetches teams for the selected team set via GET /api/teams/?team_set=ID
-  // then fetches all student assignments via GET /api/assignments/?team=ID
-  btnRunMatching.addEventListener("click", async () => {
-    const teamSetId = teamsetSelect.value;
-    const csrfToken = document.querySelector("input[name='csrfmiddlewaretoken']").value;
-
-    if (!teamSetId) {
-      alert("Please select a team set first.");
-      return;
-    }
-
-    btnRunMatching.disabled    = true;
-    btnRunMatching.textContent = "Loading…";
+    btnLoad.disabled    = true;
+    btnLoad.textContent = "Loading…";
 
     try {
-      // 3a. Fetch teams belonging to the selected team set
-      const teamsRes  = await fetch(`/api/teams/?team_set=${teamSetId}`, {
-        headers: { "X-CSRFToken": csrfToken },
-      });
-      if (!teamsRes.ok) throw new Error("Failed to load teams");
-      const teamsData = await teamsRes.json();
-      const teams     = Array.isArray(teamsData) ? teamsData : (teamsData.results || []);
+      const res  = await fetch(`/teacher/dashboard/api/load/?generation_id=${id}`);
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();   // { teams: [{name, members:[…]}], max_size }
 
-      // 3b. For each team fetch its active assignments
-      const teamsWithMembers = await Promise.all(teams.map(async team => {
-        const aRes  = await fetch(`/api/assignments/?team=${team.id}`);
-        const aData = await aRes.json();
-        const assignments = Array.isArray(aData) ? aData : (aData.results || []);
-        return {
-          ...team,
-          members: assignments.filter(a => a.is_active).map(a => a.learner),
-        };
-      }));
+      state.generationId    = id;
+      state.teams           = data.teams;
+      state.maxSize         = data.max_size ?? 5;
+      state.originalSnapshot = JSON.stringify(data.teams);
+      state.dirty           = false;
 
-      // 3c. Find unassigned students (learners with no active assignment in this team set)
-      const assignedRes  = await fetch(`/api/assignments/?team__team_set=${teamSetId}`);
-      const assignedData = await assignedRes.json();
-      const assignedIds  = new Set(
-        (Array.isArray(assignedData) ? assignedData : (assignedData.results || []))
-          .filter(a => a.is_active)
-          .map(a => a.learner?.student_id ?? a.learner)
-      );
-
-      renderTeams(teamsWithMembers);
-      // Unassigned rendering requires knowing all students — left for backend to provide
-      // For now clear the section gracefully
-      unassignedContainer.innerHTML = '<p class="placeholder-text">No unassigned students.</p>';
-
+      renderTeams();
+      setStatus(`Loaded ${data.teams.length} teams · ${countMembers()} students`);
+      sectionTeams.hidden  = false;
+      sectionExport.hidden = false;
+      statusUnsaved.hidden = true;
     } catch (err) {
-      alert(`Error: ${err.message}`);
+      alert(`Error loading: ${err.message}`);
       console.error(err);
     } finally {
-      btnRunMatching.disabled = false;
-      btnRunMatching.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="width:1.1rem;height:1.1rem">
-          <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99
-            8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12
-            18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22
-            1.78L13 11h7V4l-2.35 2.35z"/>
-        </svg>
-        Run Matching`;
+      btnLoad.disabled    = false;
+      btnLoad.textContent = "Load";
+      btnLoad.innerHTML   = `<svg viewBox="0 0 24 24" fill="currentColor" style="width:1rem;height:1rem">
+        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg> Load`;
     }
   });
 
-  // ── 4. Export CSV → /teacher/download/ ────────────────────
-  // download_csv view serves the most recent CSVGeneration from the DB.
-  // A specific historical generation can be fetched via /teacher/download/<id>/
-  btnExportCsv.addEventListener("click", () => {
-    window.location.href = "/teacher/download/";
+  // ── Reset ───────────────────────────────────────────────
+  btnReset.addEventListener("click", () => {
+    if (!state.dirty) return;
+    if (!confirm("Discard all changes and reload the original result?")) return;
+    state.teams = JSON.parse(state.originalSnapshot);
+    state.dirty = false;
+    statusUnsaved.hidden = true;
+    renderTeams();
+    setStatus(`Reset · ${state.teams.length} teams · ${countMembers()} students`);
   });
 
-  // ── 5. Render helpers ──────────────────────────────────────
+  // ── Export ──────────────────────────────────────────────
+  btnExport.addEventListener("click", async () => {
+    btnExport.disabled    = true;
+    btnExport.textContent = "Exporting…";
 
-  /**
-   * Render team cards.
-   * Shape: [ { id, name, members: [ { student_id } | "id_string" ] } ]
-   */
-  function renderTeams(teams) {
-    if (!teams.length) {
-      teamsContainer.innerHTML = '<p class="placeholder-text">No teams found for this team set.</p>';
-      return;
+    try {
+      const res = await fetch("/teacher/dashboard/api/export/", {
+        method:  "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken":  csrfToken(),
+        },
+        body: JSON.stringify({
+          generation_id: state.generationId,
+          teams:         state.teams,
+        }),
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+
+      // Trigger file download from the blob response
+      const blob     = await res.blob();
+      const url      = URL.createObjectURL(blob);
+      const a        = document.createElement("a");
+      a.href         = url;
+      a.download     = `teams_adjusted_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      state.dirty          = false;
+      statusUnsaved.hidden = true;
+      setStatus("Exported ✓");
+    } catch (err) {
+      alert(`Export failed: ${err.message}`);
+      console.error(err);
+    } finally {
+      btnExport.disabled = false;
+      btnExport.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" style="width:1rem;height:1rem">
+        <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg> Export CSV for LMS`;
     }
+  });
 
-    teamsContainer.innerHTML = teams.map(team => `
-      <div class="team-card">
-        <div class="team-card-header">${escHtml(team.name)}</div>
-        ${team.members.length
-          ? team.members.map(m => `
-              <div class="team-member">
-                <span class="team-member-dot"></span>
-                ${escHtml(typeof m === "string" ? m : (m.student_id ?? m.id))}
-              </div>`).join("")
-          : '<div class="team-member" style="color:var(--text-muted)">No members assigned</div>'
-        }
-      </div>
-    `).join("");
-  }
+  // ── Render all team cards ───────────────────────────────
+  function renderTeams() {
+    teamsContainer.innerHTML = state.teams.map(team => {
+      const count  = team.members.length;
+      const max    = state.maxSize;
+      const pct    = Math.min(100, Math.round((count / max) * 100));
+      const isFull = count >= max;
+      const barCol = isFull ? "var(--danger)" : pct >= 80 ? "var(--warning)" : "var(--success)";
 
-  /**
-   * Render unassigned student chips.
-   * Shape: [ { student_id } ] or [ "id_string" ]
-   */
-  function renderUnassigned(students) {
-    if (!students.length) {
-      unassignedContainer.innerHTML = '<p class="placeholder-text">No unassigned students.</p>';
-      return;
-    }
-    unassignedContainer.innerHTML = students.map(s => {
-      const label = typeof s === "string" ? s : s.student_id;
-      return `<span class="student-chip">${escHtml(label)}</span>`;
+      const chipsHtml = count > 0
+        ? team.members.map(id => `
+            <div class="student-chip"
+                 draggable="true"
+                 data-student="${escHtml(id)}"
+                 data-team="${escHtml(team.name)}">
+              <span class="chip-dot"></span>
+              <span class="chip-label">${escHtml(id)}</span>
+            </div>`).join("")
+        : `<div class="drop-zone--empty">Drop students here</div>`;
+
+      return `
+        <div class="team-card ${isFull ? "team-card--full" : ""}"
+             data-team="${escHtml(team.name)}">
+          <div class="team-card-header">
+            <span class="team-card-name">${escHtml(team.name)}</span>
+            ${isFull ? '<span class="team-badge-full">FULL</span>' : ""}
+          </div>
+          <div class="team-capacity">
+            <span class="team-capacity-label">${count} / ${max} members</span>
+            <div class="team-capacity-bar">
+              <div class="team-capacity-fill" style="width:${pct}%;background:${barCol}"></div>
+            </div>
+          </div>
+          <div class="drop-zone" data-team="${escHtml(team.name)}">
+            ${chipsHtml}
+          </div>
+        </div>`;
     }).join("");
+
+    attachDragDrop();
   }
 
-  /** Minimal XSS-safe HTML escape */
+  // ── Drag & Drop ─────────────────────────────────────────
+  let dragStudent = null;
+  let dragFromTeam = null;
+
+  function attachDragDrop() {
+    // Draggable chips
+    document.querySelectorAll(".student-chip").forEach(chip => {
+      chip.addEventListener("dragstart", e => {
+        dragStudent  = chip.dataset.student;
+        dragFromTeam = chip.dataset.team;
+        chip.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+      });
+      chip.addEventListener("dragend", () => {
+        chip.classList.remove("dragging");
+      });
+    });
+
+    // Drop zones
+    document.querySelectorAll(".drop-zone").forEach(zone => {
+      zone.addEventListener("dragover", e => {
+        const toTeam = zone.dataset.team;
+        const to     = state.teams.find(t => t.name === toTeam);
+        // Block dragover if team is already at max and student is from a different team
+        if (to && to.members.length >= state.maxSize && toTeam !== dragFromTeam) {
+          e.dataTransfer.dropEffect = "none";
+          return;  // don't prevent default → shows "blocked" cursor
+        }
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        zone.closest(".team-card").classList.add("team-card--over");
+      });
+      zone.addEventListener("dragleave", e => {
+        if (!zone.contains(e.relatedTarget)) {
+          zone.closest(".team-card").classList.remove("team-card--over");
+        }
+      });
+      zone.addEventListener("drop", e => {
+        e.preventDefault();
+        zone.closest(".team-card").classList.remove("team-card--over");
+
+        const toTeam = zone.dataset.team;
+        if (!dragStudent || toTeam === dragFromTeam) return;
+
+        const from = state.teams.find(t => t.name === dragFromTeam);
+        const to   = state.teams.find(t => t.name === toTeam);
+        if (!from || !to) return;
+
+        // Hard block — refuse drop if target is full
+        if (to.members.length >= state.maxSize) {
+          alert(`Team "${toTeam}" is full (${state.maxSize} members max).`);
+          return;
+        }
+
+        from.members = from.members.filter(m => m !== dragStudent);
+        if (!to.members.includes(dragStudent)) to.members.push(dragStudent);
+
+        markDirty();
+        renderTeams();
+      });
+    });
+  }
+
+  // ── Helpers ─────────────────────────────────────────────
+  function markDirty() {
+    state.dirty          = true;
+    statusUnsaved.hidden = false;
+  }
+
+  function setStatus(msg) {
+    loadStatus.hidden = false;
+    statusText.textContent = msg;
+  }
+
+  function countMembers() {
+    return state.teams.reduce((n, t) => n + t.members.length, 0);
+  }
+
   function escHtml(str) {
     return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
 });
