@@ -61,7 +61,7 @@ def dashboard_api_load(request):
 
     return JsonResponse({
         "teams":    teams,
-        "max_size": generation.team_size,
+        "max_size": generation.team_size + 1,
     })
 
 
@@ -133,7 +133,8 @@ def index(request):
             )
 
             # create teams for display
-            grouped = df_result.groupby(target_col)
+            group_col = target_col if target_col else 'teams'
+            grouped = df_result.groupby(group_col)
             for name, group in grouped:
                 teams.append({
                     'name': name,

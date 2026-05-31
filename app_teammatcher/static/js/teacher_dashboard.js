@@ -186,13 +186,6 @@ document.addEventListener("DOMContentLoaded", () => {
     // Drop zones
     document.querySelectorAll(".drop-zone").forEach(zone => {
       zone.addEventListener("dragover", e => {
-        const toTeam = zone.dataset.team;
-        const to     = state.teams.find(t => t.name === toTeam);
-        // Block dragover if team is already at max and student is from a different team
-        if (to && to.members.length >= state.maxSize && toTeam !== dragFromTeam) {
-          e.dataTransfer.dropEffect = "none";
-          return;  // don't prevent default → shows "blocked" cursor
-        }
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
         zone.closest(".team-card").classList.add("team-card--over");
