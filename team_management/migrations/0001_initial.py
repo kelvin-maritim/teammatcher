@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ("student_side", "0004_alter_studentprofile_commitment_and_more"),
+        ("student_side", "0003_rename_name_studentprofile_student_id"),
     ]
 
     operations = [

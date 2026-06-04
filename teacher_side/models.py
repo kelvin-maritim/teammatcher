@@ -4,10 +4,11 @@ from django.utils import timezone
 
 class TeamNameTemplate(models.Model):
     name = models.CharField(max_length=100, help_text="Template name (e.g., 'Marvel Heroes')")
-    team_names = models.JSONField(
-        default=list,
-        help_text="List of team names as JSON array"
-    )
+    team_names = models.TextField(
+    blank=True,
+    null=True,
+    help_text="List of team names as JSON string"
+)
     created_at = models.DateTimeField(auto_now_add=True)
     is_default = models.BooleanField(
         default=False,
