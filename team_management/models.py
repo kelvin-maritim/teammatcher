@@ -1,18 +1,21 @@
 from django.db import models
-from student_side.models import StudentProfile
+from django.contrib.auth import get_user_model
 
+User = get_user_model()
 
 class TeamSet(models.Model):
-    name = models.CharField(max_length=255, unique=True)
+    name = models.CharField(max_length=255)
+    course_id = models.CharField(max_length=255, db_index=True)  # NEW: course association
     description = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        unique_together = ("name", "course_id")  # same name can exist in different courses
         ordering = ["name"]
 
     def __str__(self):
-        return self.name
+        return f"{self.name} ({self.course_id})"
 
 
 class Team(models.Model):
@@ -39,7 +42,7 @@ class Team(models.Model):
 
 
 class TeamAssignment(models.Model):
-    learner = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name="team_assignments")
+    learner = models.ForeignKey(User, on_delete=models.CASCADE, related_name="team_assignments")
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="assignments")
     assigned_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -50,4 +53,21 @@ class TeamAssignment(models.Model):
         ordering = ["-assigned_at"]
 
     def __str__(self):
-        return f"{self.learner.student_id} -> {self.team.name}"
+        return f"{self.learner.username} -> {self.team.name}"
+
+
+class CourseEnrollment(models.Model):
+    MODE_CHOICES = [
+        ('audit', 'Audit'),
+        ('verified', 'Verified'),
+        ('masters', 'Masters'),
+    ]
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='enrollments')
+    course_id = models.CharField(max_length=255, db_index=True)
+    mode = models.CharField(max_length=20, choices=MODE_CHOICES)
+
+    class Meta:
+        unique_together = ('user', 'course_id')
+
+    def __str__(self):
+        return f"{self.user.username} – {self.course_id} ({self.mode})"

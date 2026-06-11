@@ -18,7 +18,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('name', models.CharField(help_text="Template name (e.g., 'Marvel Heroes')", max_length=100)),
-                ('team_names', models.JSONField(default=list, help_text='List of team names as JSON array')),
+               ('team_names', models.TextField(default='[]',help_text='JSON encoded list of team names')),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('is_default', models.BooleanField(default=False, help_text='Mark this template as the default selection')),
             ],
